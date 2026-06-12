@@ -1,0 +1,38 @@
+{
+  "name": "yajlib",
+  "version": "0.0.0",
+  "description": "Typed, composable HTTP client with compile-time path param enforcement",
+  "license": "MIT",
+  "author": "Mohamed Ragaiy",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Mox93/yajlib"
+  },
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "npm run build"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.cjs",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "zod": ">=4.0.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "zod": "^4.4.3"
+  }
+}

@@ -1,16 +1,19 @@
-import { z, ZodError, ZodType } from "zod";
-import {
+import type { z, ZodType } from "zod";
+import { ZodError } from "zod";
+import type {
   ComputeMissingParams,
-  concatPathname,
   InferRequestData,
   InferRouteParams,
   InferSearch,
-  isEmpty,
-  mergeConfigs,
-  noBody,
   Overwrite,
   RequestConfig,
   SendArgs,
+} from "./core";
+import {
+  concatPathname,
+  isEmpty,
+  mergeConfigs,
+  noBody,
   VOID_METHODS,
 } from "./core";
 
@@ -58,12 +61,12 @@ export class RequestBuilder<const TConfig extends RequestConfig> {
         pathname,
         params,
         search,
-        validateSearch,
+        parseSearch,
         headers,
         data,
-        validateRequest,
+        parseRequest,
         signal,
-        validateResponse,
+        parseResponse,
       } = mergedConfig,
       url = new URL(
         typeof baseUrl === "string" ? baseUrl : baseUrl?.href || "/",
@@ -95,13 +98,13 @@ export class RequestBuilder<const TConfig extends RequestConfig> {
     let key, value;
 
     if (search) {
-      let resolvedSearch: Record<string, any> = {};
+      let resolvedSearch: Record<string, any> | undefined | null = {};
 
       for ([key, value] of Object.entries(search))
         resolvedSearch[key] = typeof value === "function" ? value() : value;
 
-      if (validateSearch) {
-        const result = validateSearch.safeParse(resolvedSearch);
+      if (parseSearch) {
+        const result = await parseSearch.safeParseAsync(resolvedSearch);
         if (result.success) resolvedSearch = result.data;
         else
           throw {
@@ -111,8 +114,14 @@ export class RequestBuilder<const TConfig extends RequestConfig> {
           };
       }
 
-      for ([key, value] of Object.entries(resolvedSearch))
-        if (!isEmpty(value)) url.searchParams.append(key, `${value}`);
+      if (resolvedSearch)
+        for ([key, value] of Object.entries(resolvedSearch)) {
+          if (isEmpty(value)) continue;
+          if (Array.isArray(value)) {
+            let val;
+            for (val of value) url.searchParams.append(key, `${val}`);
+          } else url.searchParams.set(key, `${value}`);
+        }
     }
 
     const resolvedHeaders = new Headers();
@@ -124,8 +133,8 @@ export class RequestBuilder<const TConfig extends RequestConfig> {
     let body: any;
     if (!excludeBody) {
       body = data;
-      if (body && validateRequest) {
-        body = validateRequest.safeParse(body);
+      if (body && parseRequest) {
+        body = await parseRequest.safeParseAsync(body);
         if (body.success) body = body.data;
         else
           throw {
@@ -136,8 +145,7 @@ export class RequestBuilder<const TConfig extends RequestConfig> {
       }
     }
 
-    if (body instanceof FormData)
-      resolvedHeaders.set("Content-Type", "multipart/form-data");
+    if (body instanceof FormData) resolvedHeaders.delete("Content-Type");
     else if (body) {
       let contentType: string | undefined;
       switch (typeof body) {
@@ -160,14 +168,13 @@ export class RequestBuilder<const TConfig extends RequestConfig> {
         body,
         signal,
       });
-
       if (!response.ok && !mergedConfig.silent) {
         let errorData, parseError;
         const errorText = await response.text();
         try {
           errorData = JSON.parse(errorText);
-          const { validateError } = mergedConfig;
-          if (validateError) errorData = validateError.parse(errorData);
+          const { parseError } = mergedConfig;
+          if (parseError) errorData = parseError.parse(errorData);
         } catch (error) {
           if (error instanceof ZodError) parseError = error;
           else errorData = errorText;
@@ -182,10 +189,8 @@ export class RequestBuilder<const TConfig extends RequestConfig> {
 
       const data = await response.json();
 
-      return (
-        validateResponse ? validateResponse.parse(data) : data
-      ) as z.infer<
-        Overwrite<TConfig, TNewConfig, "validateResponse", ZodType, any>
+      return (parseResponse ? parseResponse.parse(data) : data) as z.infer<
+        Overwrite<TConfig, TNewConfig, "parseResponse", ZodType, any>
       >;
     } catch (error: any) {
       if (EXPECTED_ERROR.includes(error.type)) throw error;

@@ -79,21 +79,21 @@ await userApi.send({ params: { id: 1 } }); // OK
 
 ## Config Reference
 
-| Field              | Type                                                       | Description                                                                         |
-| ------------------ | ---------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `baseUrl`          | `string \| URL`                                            | Base URL for all requests                                                           |
-| `pathname`         | `string`                                                   | Path appended to `baseUrl`. Supports `{param}` placeholders                         |
-| `params`           | `Record<string, Resolvable<string \| number>>`             | Values substituted into `{param}` placeholders                                      |
-| `method`           | `GET \| POST \| PUT \| PATCH \| DELETE \| HEAD \| OPTIONS` | HTTP method. Defaults to `GET`                                                      |
-| `headers`          | `Record<string, Resolvable<string>>`                       | Request headers                                                                     |
-| `search`           | `Record<string, Resolvable<any>>`                          | URL search params                                                                   |
-| `validateSearch`   | `ZodType`                                                  | Zod schema to validate/transform `search` before appending to the URL               |
-| `data`             | `unknown \| FormData`                                      | Request body. Plain objects are JSON-serialised automatically                       |
-| `validateRequest`  | `ZodType`                                                  | Zod schema to validate and transform `data` before serialisation. Throws on failure |
-| `validateResponse` | `ZodType`                                                  | Zod schema to parse the response. Inferred as the return type of `send`             |
-| `validateError`    | `ZodType`                                                  | Zod schema to parse the `error` field of non-2xx responses                          |
-| `signal`           | `AbortSignal`                                              | Passed directly to `fetch` for cancellation                                         |
-| `silent`           | `boolean`                                                  | If `true`, non-2xx responses do not throw                                           |
+| Field           | Type                                                       | Description                                                                         |
+| --------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `baseUrl`       | `string \| URL`                                            | Base URL for all requests                                                           |
+| `pathname`      | `string`                                                   | Path appended to `baseUrl`. Supports `{param}` placeholders                         |
+| `params`        | `Record<string, Resolvable<string \| number>>`             | Values substituted into `{param}` placeholders                                      |
+| `method`        | `GET \| POST \| PUT \| PATCH \| DELETE \| HEAD \| OPTIONS` | HTTP method. Defaults to `GET`                                                      |
+| `headers`       | `Record<string, Resolvable<string>>`                       | Request headers                                                                     |
+| `search`        | `Record<string, Resolvable<any>>`                          | URL search params                                                                   |
+| `parseSearch`   | `ZodType`                                                  | Zod schema to validate/transform `search` before appending to the URL               |
+| `data`          | `unknown \| FormData`                                      | Request body. Plain objects are JSON-serialised automatically                       |
+| `parseRequest`  | `ZodType`                                                  | Zod schema to validate and transform `data` before serialisation. Throws on failure |
+| `parseResponse` | `ZodType`                                                  | Zod schema to parse the response. Inferred as the return type of `send`             |
+| `parseError`    | `ZodType`                                                  | Zod schema to parse the `error` field of non-2xx responses                          |
+| `signal`        | `AbortSignal`                                              | Passed directly to `fetch` for cancellation                                         |
+| `silent`        | `boolean`                                                  | If `true`, non-2xx responses do not throw                                           |
 
 ---
 
@@ -117,16 +117,16 @@ Getter functions compose safely through `extend` — they are preserved as-is du
 
 ## Response Typing
 
-If `validateResponse` is present in the merged config, the return type of `send` is inferred as `z.infer<typeof validateResponse>`. Without a schema, it falls back to `any`.
+If `parseResponse` is present in the merged config, the return type of `send` is inferred as `z.infer<typeof parseResponse>`. Without a schema, it falls back to `any`.
 
 ```ts
 import { z } from "zod";
 
-const validateUser = z.object({ id: z.number(), name: z.string() });
+const parseUser = z.object({ id: z.number(), name: z.string() });
 
 const userApi = api.extend({
   pathname: "/users/{id}",
-  validateResponse: validateUser,
+  parseResponse: parseUser,
 });
 
 const user = await userApi.send({ params: { id: 1 } });
@@ -147,7 +147,7 @@ import type { YajlibError } from "./index";
 | `type`          | When it's thrown                                            | Extra fields                                      |
 | --------------- | ----------------------------------------------------------- | ------------------------------------------------- |
 | `SERVER_ERROR`  | Response status is not 2xx (and `silent` is not `true`)     | `status: number`, `error: unknown`, `parseError?` |
-| `PARSE_ERROR`   | `validateSearch` or `validateRequest` validation fails      | `error: ZodError`, `target: "search" \| "data"`   |
+| `PARSE_ERROR`   | `parseSearch` or `parseRequest` validation fails            | `error: ZodError`, `target: "search" \| "data"`   |
 | `RUNTIME_ERROR` | Network failure or any other unexpected throw inside `send` | `error: Error`                                    |
 
 ```ts
@@ -166,7 +166,7 @@ try {
 }
 ```
 
-If `validateError` is configured, the `error` field of a `SERVER_ERROR` is parsed through it before throwing.
+If `parseError` is configured, the `error` field of a `SERVER_ERROR` is parsed through it before throwing.
 
 To suppress throwing on non-2xx responses and handle them manually, set `silent: true`.
 
@@ -212,14 +212,14 @@ const PaginatedUsers = z.object({
 
 const listUsers = api.extend({
   pathname: "/users",
-  validateResponse: PaginatedUsers,
+  parseResponse: PaginatedUsers,
 });
 
 const createUser = api.extend({
   method: "POST",
   pathname: "/users",
-  validateRequest: CreateUserBody, // validated before the body is sent
-  validateResponse: z.object({ id: z.number() }),
+  parseRequest: CreateUserBody, // validated before the body is sent
+  parseResponse: z.object({ id: z.number() }),
 });
 
 const { data, total } = await listUsers.send({

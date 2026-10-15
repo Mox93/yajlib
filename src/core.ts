@@ -10,31 +10,30 @@ export function mergeConfigs<
     if (config1[field] && config2[field])
       result[field] = mergeRecords(config1[field], config2[field]) as any;
     else if (config1[field]) result[field] = config1[field] as any;
-
   const pathname = concatPathname(config1.pathname, config2.pathname) as string;
   if (pathname) result.pathname = pathname;
-
   return result as MergeConfigs<TConfig1, TConfig2>;
 }
 
-export function concatPathname<const TPaths extends (string | undefined)[]>(
-  ...pathnames: TPaths
+export function concatPathname<const TParts extends (string | undefined)[]>(
+  ...parts: TParts
 ) {
-  let result = "",
-    pathname;
-  for (pathname of pathnames)
-    if ((pathname = pathname?.replace(/^\/+/g, "").replace(/\/+$/g, "")))
-      result += "/" + pathname;
-  return result as ConcatPathnames<TPaths>;
+  let pathname = "",
+    part;
+  for (part of parts)
+    pathname += part?.replace(/^\/*/, "/").replace(/\/+$/, "") ?? "";
+  return pathname as ConcatPathnames<TParts>;
 }
 
-export function isEmpty(value: any): value is (typeof EMPTY_VALUES)[number] {
+export function isEmpty(value: any): value is EmptyValue {
   return EMPTY_VALUES.includes(value);
 }
 
-export function noBody(method: any): method is (typeof VOID_METHODS)[number] {
+export function noBody(method: any): method is VoidMethod {
   return VOID_METHODS.includes(method);
 }
+
+export const VOID_METHODS = ["GET", "HEAD", "OPTIONS"] as const;
 
 function mergeRecords<T1, T2>(record1: T1, record2: T2) {
   const result = { ...record1 } as Merge<T1, T2>;
@@ -44,8 +43,6 @@ function mergeRecords<T1, T2>(record1: T1, record2: T2) {
       result[key as keyof typeof result] = record2[key] as any;
   return result;
 }
-
-export const VOID_METHODS = ["GET", "HEAD", "OPTIONS"] as const;
 
 const CONFIG_MERGE_FIELDS = ["params", "search", "headers"] as const,
   EMPTY_VALUES = [undefined, null, ""] as const;
@@ -59,28 +56,27 @@ export interface FieldMerges<
   pathname: ConcatPathnames<[T1["pathname"], T2["pathname"]]>;
   params: Merge<T1["params"], T2["params"]>;
   search: Merge<T1["search"], T2["search"]>;
-  validateSearch: Overwrite<T1, T2, "validateSearch", ZodType>;
+  parseSearch: Overwrite<T1, T2, "parseSearch", ZodType>;
   headers: Merge<T1["headers"], T2["headers"]>;
   data: Overwrite<T1, T2, "data", unknown>;
-  validateRequest: Overwrite<T1, T2, "validateRequest", ZodType>;
-  validateResponse: Overwrite<T1, T2, "validateResponse", ZodType>;
-  validateError: Overwrite<T1, T2, "validateError", ZodType>;
+  parseRequest: Overwrite<T1, T2, "parseRequest", ZodType>;
+  parseResponse: Overwrite<T1, T2, "parseResponse", ZodType>;
+  parseError: Overwrite<T1, T2, "parseError", ZodType>;
   silent: Overwrite<T1, T2, "silent", boolean>;
   signal: Overwrite<T1, T2, "signal", AbortSignal>;
 }
-
 export type RequestConfig = Partial<{
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
   baseUrl: string | URL;
   pathname: string;
   params: Record<string, Resolvable<unknown>>;
   search: Record<string, Resolvable<unknown>>;
-  validateSearch: ZodType<Record<string, unknown>>;
+  parseSearch: ZodType<Record<string, unknown>>;
   headers: Record<string, Resolvable<string | undefined | null>>;
   data: unknown;
-  validateRequest: ZodType;
-  validateResponse: ZodType;
-  validateError: ZodType;
+  parseRequest: ZodType;
+  parseResponse: ZodType;
+  parseError: ZodType;
   silent: boolean;
   signal: AbortSignal;
 }>;
@@ -107,12 +103,12 @@ export type InferRouteParams<
 export type InferRequestData<
   TConfig1 extends RequestConfig,
   TConfig2 extends RequestConfig = {},
-> = z.input<Overwrite<TConfig1, TConfig2, "validateRequest", ZodType, unknown>>;
+> = z.input<Overwrite<TConfig1, TConfig2, "parseRequest", ZodType, unknown>>;
 
 export type InferSearch<
   TConfig1 extends RequestConfig,
   TConfig2 extends RequestConfig,
-> = z.input<Overwrite<TConfig1, TConfig2, "validateSearch", ZodType, unknown>>;
+> = z.input<Overwrite<TConfig1, TConfig2, "parseSearch", ZodType, unknown>>;
 
 export type Overwrite<
   TConfig1,
@@ -141,18 +137,24 @@ export type YajlibError =
   | { type: "RUNTIME_ERROR"; error: Error };
 
 export type SendArgs<TConfig, TProps extends RequestConfig> = {
-  [K in keyof TProps as keyof TProps[K] extends never ? never : K]: TProps[K];
+  [K in keyof TProps as RequiredOnly<TProps[K], K>]: TProps[K];
 } extends infer TFiltered
   ? keyof TFiltered extends never
     ? [config?: TConfig]
     : [config: TConfig & TFiltered]
   : never;
 
+type RequiredOnly<T, R = T> = T extends any
+  ? keyof T extends never
+    ? never
+    : R
+  : never;
+
 type GetRouteParams<T extends unknown[]> =
   ExtractRouteParams<T> extends infer P
     ? keyof P extends never
       ? Record<string, Resolvable<string | number>>
-      : Partial<P>
+      : { [K in keyof P]?: P[K] | null }
     : never;
 
 type MergeConfigs<T1 extends RequestConfig, T2 extends RequestConfig> =
@@ -202,7 +204,8 @@ type Merge<T1, T2> =
     : T2;
 
 type RemoveOuterSlashes<T> = RemoveRightSlash<RemoveLeftSlash<T>>;
-
 type RemoveLeftSlash<T> = T extends `/${infer P}` ? RemoveLeftSlash<P> : T;
-
 type RemoveRightSlash<T> = T extends `${infer P}/` ? RemoveRightSlash<P> : T;
+
+type EmptyValue = (typeof EMPTY_VALUES)[number];
+type VoidMethod = (typeof VOID_METHODS)[number];

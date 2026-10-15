@@ -1,3 +1,8 @@
 {
+  "js/ts.experimental.useTsgo": true,
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "explicit"
+  },
   "cSpell.words": ["yajlib"]
 }

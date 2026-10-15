@@ -69,7 +69,21 @@ export interface FieldMerges<
   signal: Overwrite<T1, T2, "signal", AbortSignal>;
 }
 
-export type RequestConfig = Partial<ConfigOptions>;
+export type RequestConfig = Partial<{
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+  baseUrl: string | URL;
+  pathname: string;
+  params: Record<string, Resolvable<unknown>>;
+  search: Record<string, Resolvable<unknown>>;
+  validateSearch: ZodType<Record<string, unknown>>;
+  headers: Record<string, Resolvable<string | undefined | null>>;
+  data: unknown;
+  validateRequest: ZodType;
+  validateResponse: ZodType;
+  validateError: ZodType;
+  silent: boolean;
+  signal: AbortSignal;
+}>;
 
 export type Resolvable<T> = T | (() => T);
 
@@ -133,22 +147,6 @@ export type SendArgs<TConfig, TProps extends RequestConfig> = {
     ? [config?: TConfig]
     : [config: TConfig & TFiltered]
   : never;
-
-interface ConfigOptions {
-  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
-  baseUrl: string | URL;
-  pathname: string;
-  params: Record<string, Resolvable<unknown>>;
-  search: Record<string, Resolvable<unknown>>;
-  validateSearch: ZodType<Record<string, unknown>>;
-  headers: Record<string, Resolvable<string | undefined | null>>;
-  data: unknown;
-  validateRequest: ZodType;
-  validateResponse: ZodType;
-  validateError: ZodType;
-  silent: boolean;
-  signal: AbortSignal;
-}
 
 type GetRouteParams<T extends unknown[]> =
   ExtractRouteParams<T> extends infer P

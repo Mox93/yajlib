@@ -20,10 +20,10 @@ export function yajlib<
     data?: InferRequestData<TConfig>;
   },
 >(config: TConfig) {
-  return new Yajlib(config);
+  return new RequestBuilder(config);
 }
 
-export class Yajlib<const TConfig extends RequestConfig> {
+export class RequestBuilder<const TConfig extends RequestConfig> {
   constructor(private _config: TConfig) {}
 
   get config() {
@@ -36,7 +36,7 @@ export class Yajlib<const TConfig extends RequestConfig> {
       data?: InferRequestData<TConfig, TNewConfig>;
     },
   >(config: TNewConfig) {
-    return new Yajlib(mergeConfigs(this.config, config));
+    return new RequestBuilder(mergeConfigs(this.config, config));
   }
 
   async send<const TNewConfig extends RequestConfig>(

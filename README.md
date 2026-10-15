@@ -27,7 +27,7 @@ const user = await api.send({
 
 ### `yajlib(config)`
 
-Creates a `Yajlib` from a base config. Everything in the config is optional — you can start with just a `baseUrl` and add the rest later.
+Creates a `RequestBuilder` from a base config. Everything in the config is optional — you can start with just a `baseUrl` and add the rest later.
 
 ```ts
 const api = yajlib({
@@ -40,7 +40,7 @@ const api = yajlib({
 
 ### `handler.extend(config)`
 
-Returns a new `Yajlib` that merges the new config on top of the existing one. The original handler is not mutated.
+Returns a new `RequestBuilder` that merges the new config on top of the existing one. The original handler is not mutated.
 
 - Scalar fields (`method`, `baseUrl`, `data`, etc.) — new value wins.
 - Record fields (`headers`, `params`, `search`) — merged key-by-key, new value wins on collision.
@@ -79,21 +79,21 @@ await userApi.send({ params: { id: 1 } }); // OK
 
 ## Config Reference
 
-| Field              | Type                                           | Description                                                                         |
-| ------------------ | ---------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `baseUrl`          | `string \| URL`                                | Base URL for all requests                                                           |
-| `pathname`         | `string`                                       | Path appended to `baseUrl`. Supports `{param}` placeholders                         |
-| `params`           | `Record<string, Resolvable<string \| number>>` | Values substituted into `{param}` placeholders                                      |
-| `method`           | `GET \| POST \| PUT \| PATCH \| DELETE`        | HTTP method. Defaults to `GET`                                                      |
-| `headers`          | `Record<string, Resolvable<string>>`           | Request headers                                                                     |
-| `search`           | `Record<string, Resolvable<any>>`              | URL search params                                                                   |
-| `validateSearch`   | `ZodType`                                      | Zod schema to validate/transform `search` before appending to the URL               |
-| `data`             | `unknown \| FormData`                          | Request body. Plain objects are JSON-serialised automatically                       |
-| `validateRequest`  | `ZodType`                                      | Zod schema to validate and transform `data` before serialisation. Throws on failure |
-| `validateResponse` | `ZodType`                                      | Zod schema to parse the response. Inferred as the return type of `send`             |
-| `validateError`    | `ZodType`                                      | Zod schema to parse the `error` field of non-2xx responses                          |
-| `signal`           | `AbortSignal`                                  | Passed directly to `fetch` for cancellation                                         |
-| `silent`           | `boolean`                                      | If `true`, non-2xx responses do not throw                                           |
+| Field              | Type                                                       | Description                                                                         |
+| ------------------ | ---------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `baseUrl`          | `string \| URL`                                            | Base URL for all requests                                                           |
+| `pathname`         | `string`                                                   | Path appended to `baseUrl`. Supports `{param}` placeholders                         |
+| `params`           | `Record<string, Resolvable<string \| number>>`             | Values substituted into `{param}` placeholders                                      |
+| `method`           | `GET \| POST \| PUT \| PATCH \| DELETE \| HEAD \| OPTIONS` | HTTP method. Defaults to `GET`                                                      |
+| `headers`          | `Record<string, Resolvable<string>>`                       | Request headers                                                                     |
+| `search`           | `Record<string, Resolvable<any>>`                          | URL search params                                                                   |
+| `validateSearch`   | `ZodType`                                                  | Zod schema to validate/transform `search` before appending to the URL               |
+| `data`             | `unknown \| FormData`                                      | Request body. Plain objects are JSON-serialised automatically                       |
+| `validateRequest`  | `ZodType`                                                  | Zod schema to validate and transform `data` before serialisation. Throws on failure |
+| `validateResponse` | `ZodType`                                                  | Zod schema to parse the response. Inferred as the return type of `send`             |
+| `validateError`    | `ZodType`                                                  | Zod schema to parse the `error` field of non-2xx responses                          |
+| `signal`           | `AbortSignal`                                              | Passed directly to `fetch` for cancellation                                         |
+| `silent`           | `boolean`                                                  | If `true`, non-2xx responses do not throw                                           |
 
 ---
 
@@ -137,13 +137,11 @@ const user = await userApi.send({ params: { id: 1 } });
 
 ## Error Handling
 
-All errors thrown by `send` carry a `type` symbol that lets you distinguish between failure modes without relying on `instanceof` checks. Import `RequestErrors` for the symbols and `ErrorTypes` for the discriminated union.
+All errors thrown by `send` carry a `type` string that lets you distinguish between failure modes without relying on `instanceof` checks. Import `YajlibError` for the discriminated union type.
 
 ```ts
-import { yajlib, RequestErrors } from "./index";
-import type { ErrorTypes } from "./index";
-
-const { SERVER_ERROR, PARSE_ERROR, RUNTIME_ERROR } = RequestErrors;
+import { yajlib } from "./index";
+import type { YajlibError } from "./index";
 ```
 
 | `type`          | When it's thrown                                            | Extra fields                                      |
@@ -156,13 +154,13 @@ const { SERVER_ERROR, PARSE_ERROR, RUNTIME_ERROR } = RequestErrors;
 try {
   await api.send({ pathname: "/protected" });
 } catch (e) {
-  const err = e as ErrorTypes;
+  const err = e as YajlibError;
 
-  if (err.type === SERVER_ERROR) {
+  if (err.type === "SERVER_ERROR") {
     console.error(err.status, err.error);
-  } else if (err.type === PARSE_ERROR) {
+  } else if (err.type === "PARSE_ERROR") {
     console.error(`Validation failed on ${err.target}`, err.error);
-  } else if (err.type === RUNTIME_ERROR) {
+  } else if (err.type === "RUNTIME_ERROR") {
     console.error("Network or unexpected error", err.error);
   }
 }

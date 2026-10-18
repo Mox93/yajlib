@@ -1,18 +1,33 @@
-import type { ZodError, ZodType, z } from "zod";
+import type {
+  AnyParser,
+  InferParserInput,
+  InferParserOutput,
+  Parser,
+} from "./parser";
 
 export function mergeConfigs<
   const TConfig1 extends RequestConfig,
   const TConfig2 extends RequestConfig,
 >(config1: TConfig1, config2: TConfig2) {
-  const result = mergeRecords(config1, config2);
-  let field;
-  for (field of CONFIG_MERGE_FIELDS)
-    if (config1[field] && config2[field])
-      result[field] = mergeRecords(config1[field], config2[field]) as any;
-    else if (config1[field]) result[field] = config1[field] as any;
-  const pathname = concatPathname(config1.pathname, config2.pathname) as string;
-  if (pathname) result.pathname = pathname;
-  return result as MergeConfigs<TConfig1, TConfig2>;
+  const config: Record<string, unknown> = {};
+  let key, subKey, source, target: Record<string, unknown>;
+  for (key of REPLACEABLE_FIELDS)
+    if (!isEmpty(config2[key])) config[key] = config2[key];
+    else if (!isEmpty(config1[key])) config[key] = config1[key];
+  for (key of MERGEABLE_FIELDS) {
+    if (!config1[key] && !config2[key]) continue;
+    target = config[key] = {};
+    if ((source = config1[key]))
+      for (subKey in source)
+        if (!isEmpty(source[subKey])) target[subKey] = source[subKey];
+    if ((source = config2[key]))
+      for (subKey in source)
+        if (!isEmpty(source[subKey])) target[subKey] = source[subKey];
+  }
+  config.pathname = concatPathname(config1.pathname, config2.pathname);
+  return config as FieldMerger<TConfig1, TConfig2> extends infer T
+    ? { [K in Extract<keyof TConfig1 | keyof TConfig2, keyof T>]: T[K] }
+    : never;
 }
 
 export function concatPathname<const TParts extends (string | undefined)[]>(
@@ -29,165 +44,184 @@ export function isEmpty(value: any): value is EmptyValue {
   return EMPTY_VALUES.includes(value);
 }
 
-export function noBody(method: any): method is VoidMethod {
+export function isVoid(method: any): method is VoidMethod {
   return VOID_METHODS.includes(method);
 }
 
 export const VOID_METHODS = ["GET", "HEAD", "OPTIONS"] as const;
 
-function mergeRecords<T1, T2>(record1: T1, record2: T2) {
-  const result = { ...record1 } as Merge<T1, T2>;
-  let key: keyof T2;
-  for (key in record2)
-    if (record2[key] !== undefined)
-      result[key as keyof typeof result] = record2[key] as any;
-  return result;
-}
-
-const CONFIG_MERGE_FIELDS = ["params", "search", "headers"] as const,
+const REPLACEABLE_FIELDS = [
+    "method",
+    "baseUrl",
+    "parseSearch",
+    "data",
+    "parseRequest",
+    "parseResponse",
+    "parseError",
+    "silent",
+    "signal",
+  ] as const,
+  MERGEABLE_FIELDS = ["params", "search", "headers"] as const,
   EMPTY_VALUES = [undefined, null, ""] as const;
 
-export interface FieldMerges<
-  T1 extends RequestConfig,
-  T2 extends RequestConfig,
-> {
-  method: Overwrite<T1, T2, "method", string>;
-  baseUrl: Overwrite<T1, T2, "baseUrl", string | URL>;
-  pathname: ConcatPathnames<[T1["pathname"], T2["pathname"]]>;
-  params: Merge<T1["params"], T2["params"]>;
-  search: Merge<T1["search"], T2["search"]>;
-  parseSearch: Overwrite<T1, T2, "parseSearch", ZodType>;
-  headers: Merge<T1["headers"], T2["headers"]>;
-  data: Overwrite<T1, T2, "data", unknown>;
-  parseRequest: Overwrite<T1, T2, "parseRequest", ZodType>;
-  parseResponse: Overwrite<T1, T2, "parseResponse", ZodType>;
-  parseError: Overwrite<T1, T2, "parseError", ZodType>;
-  silent: Overwrite<T1, T2, "silent", boolean>;
-  signal: Overwrite<T1, T2, "signal", AbortSignal>;
+export interface RequestConfig {
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+  baseUrl?: string | URL;
+  pathname?: string;
+  params?: Record<string, Resolvable<string | number>>;
+  search?: Record<string, Resolvable<unknown>>;
+  parseSearch?: Parser<any, Record<string, unknown> | undefined>;
+  headers?: Record<string, Resolvable<string | undefined | null>>;
+  data?: unknown;
+  parseRequest?: AnyParser;
+  parseResponse?: AnyParser;
+  parseError?: AnyParser;
+  silent?: boolean;
+  signal?: AbortSignal;
 }
-export type RequestConfig = Partial<{
-  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
-  baseUrl: string | URL;
-  pathname: string;
-  params: Record<string, Resolvable<unknown>>;
-  search: Record<string, Resolvable<unknown>>;
-  parseSearch: ZodType<Record<string, unknown>>;
-  headers: Record<string, Resolvable<string | undefined | null>>;
-  data: unknown;
-  parseRequest: ZodType;
-  parseResponse: ZodType;
-  parseError: ZodType;
-  silent: boolean;
-  signal: AbortSignal;
-}>;
 
-export type Resolvable<T> = T | (() => T);
-
-export type ComputeMissingParams<
+export interface FieldMerger<
   TConfig1 extends RequestConfig,
   TConfig2 extends RequestConfig,
-> = Omit<
-  ExtractRouteParams<[TConfig1["pathname"], TConfig2["pathname"]]>,
-  keyof TConfig1["params"] | keyof TConfig2["params"]
->;
+> {
+  method: Overwrite<TConfig1, TConfig2, "method", string, "GET">;
+  baseUrl: Overwrite<TConfig1, TConfig2, "baseUrl", string | URL>;
+  pathname: ConcatPathnames<[TConfig1["pathname"], TConfig2["pathname"]]>;
+  params: Merge<TConfig1["params"], TConfig2["params"]>;
+  search: Merge<TConfig1["search"], TConfig2["search"]>;
+  parseSearch: Overwrite<TConfig1, TConfig2, "parseSearch", AnyParser>;
+  headers: Merge<TConfig1["headers"], TConfig2["headers"]>;
+  data: Overwrite<TConfig1, TConfig2, "data", unknown>;
+  parseRequest: Overwrite<TConfig1, TConfig2, "parseRequest", AnyParser>;
+  parseResponse: Overwrite<TConfig1, TConfig2, "parseResponse", AnyParser>;
+  parseError: Overwrite<TConfig1, TConfig2, "parseError", AnyParser>;
+  silent: Overwrite<TConfig1, TConfig2, "silent", boolean>;
+  signal: Overwrite<TConfig1, TConfig2, "signal", AbortSignal>;
+}
 
-export type InferRouteParams<
+export interface InferredConfigs<
   TConfig1 extends RequestConfig,
   TConfig2 extends RequestConfig = {},
-> = TConfig1 extends { pathname: infer TPath1 }
-  ? TConfig2 extends { pathname: infer TPath2 }
-    ? GetRouteParams<[TPath1, TPath2]>
-    : GetRouteParams<[TConfig1["pathname"]]>
-  : GetRouteParams<[TConfig2["pathname"]]>;
-
-export type InferRequestData<
-  TConfig1 extends RequestConfig,
-  TConfig2 extends RequestConfig = {},
-> = z.input<Overwrite<TConfig1, TConfig2, "parseRequest", ZodType, unknown>>;
-
-export type InferSearch<
-  TConfig1 extends RequestConfig,
-  TConfig2 extends RequestConfig,
-> = z.input<Overwrite<TConfig1, TConfig2, "parseSearch", ZodType, unknown>>;
-
-export type Overwrite<
-  TConfig1,
-  TConfig2,
-  Key extends keyof TConfig1 | keyof TConfig2,
-  Ref,
-  Fallback = never,
-> = TConfig2 extends { [_ in Key]: Ref }
-  ? TConfig2[Key]
-  : TConfig1 extends { [_ in Key]: Ref }
-    ? TConfig1[Key]
-    : Fallback;
-
-export type YajlibError =
-  | {
-      type: "SERVER_ERROR";
-      status: number;
-      error: any;
-      parseError?: ZodError;
-    }
-  | {
-      type: "PARSE_ERROR";
-      error: ZodError;
-      target: "data" | "search";
-    }
-  | { type: "RUNTIME_ERROR"; error: Error };
-
-export type SendArgs<TConfig, TProps extends RequestConfig> = {
-  [K in keyof TProps as RequiredOnly<TProps[K], K>]: TProps[K];
-} extends infer TFiltered
-  ? keyof TFiltered extends never
-    ? [config?: TConfig]
-    : [config: TConfig & TFiltered]
-  : never;
-
-type RequiredOnly<T, R = T> = T extends any
-  ? keyof T extends never
-    ? never
-    : R
-  : never;
-
-type GetRouteParams<T extends unknown[]> =
-  ExtractRouteParams<T> extends infer P
+> {
+  params?: ExtractRouteParams<
+    FieldMerger<TConfig1, TConfig2>["pathname"]
+  > extends infer P
     ? keyof P extends never
       ? Record<string, Resolvable<string | number>>
       : { [K in keyof P]?: P[K] | null }
     : never;
-
-type MergeConfigs<T1 extends RequestConfig, T2 extends RequestConfig> =
-  FieldMerges<T1, T2> extends infer T
-    ? {
-        [K in keyof T1 | keyof T2]: K extends keyof T
-          ? T[K]
-          : K extends keyof T2
-            ? T2[K]
-            : K extends keyof T1
-              ? T1[K]
-              : never;
-      }
+  data?: FieldMerger<TConfig1, TConfig2>["method"] extends VoidMethod
+    ? never
+    : InferRequest<TConfig1, TConfig2>["Input"];
+  /** Config-level `search` is merged key-by-key and resolved lazily, so every key is optional and may be a function. */
+  search?: InferSearch<TConfig1, TConfig2>["Input"] extends infer T
+    ? T extends Record<string, unknown>
+      ? { [K in keyof T]?: Resolvable<T[K]> }
+      : T
     : never;
+}
 
-type ConcatPathnames<T extends unknown[]> = T extends [infer F, ...infer R]
-  ? string extends F
-    ? ConcatPathnames<R>
-    : F extends string
-      ? RemoveOuterSlashes<F> extends ""
-        ? ConcatPathnames<R>
-        : `/${RemoveOuterSlashes<F>}${ConcatPathnames<R>}`
-      : ConcatPathnames<R>
-  : "";
+export type SendArgs<
+  TConfig1 extends RequestConfig,
+  TConfig2 extends RequestConfig,
+> = {
+  data: FieldMerger<TConfig1, TConfig2>["method"] extends VoidMethod
+    ? never
+    : InferRequest<TConfig1, TConfig2>["Input"];
+  params: Omit<
+    ExtractRouteParams<FieldMerger<TConfig1, TConfig2>["pathname"]>,
+    keyof TConfig1["params"] | keyof TConfig2["params"]
+  >;
+  search: InferSearch<TConfig1, TConfig2>["Input"];
+} extends infer T
+  ? [
+      { [K in keyof T as ArgKind<T[K]> extends "required" ? K : never]: T[K] },
+      { [K in keyof T as ArgKind<T[K]> extends "optional" ? K : never]?: T[K] },
+    ] extends [infer TRequired, infer TOptional]
+    ? keyof TRequired extends never
+      ? [config?: TConfig2 & InferredConfigs<TConfig1, TConfig2> & TOptional]
+      : [
+          config: TConfig2 &
+            InferredConfigs<TConfig1, TConfig2> &
+            TRequired &
+            TOptional,
+        ]
+    : never
+  : never;
 
-type ExtractRouteParams<T extends unknown[]> = T extends [infer F, ...infer R]
-  ? F extends `${string}{${infer Param}}${infer P}`
-    ? Merge<
-        { [K in Param]: Resolvable<string | number> },
-        ExtractRouteParams<[P, ...R]>
-      >
-    : ExtractRouteParams<R>
-  : {};
+/**
+ * How a `send()` argument is exposed, based on the parser's input type:
+ * - "none":     no parser (`unknown`/`any`) or nothing to provide (`{}`/`undefined`)
+ * - "optional": the input accepts `undefined`, so the caller may omit it
+ * - "required": anything else
+ */
+type ArgKind<T> = unknown extends T
+  ? "none"
+  : undefined extends T
+    ? [Exclude<T, undefined>] extends [never]
+      ? "none"
+      : "optional"
+    : [
+          T extends unknown
+            ? [keyof T] extends [never]
+              ? true
+              : false
+            : never,
+        ] extends [true]
+      ? "none"
+      : "required";
+
+/*************\
+|** PARSERS **|
+\*************/
+interface InferParser<T> {
+  Input: InferParserInput<T>;
+  Output: InferParserOutput<T>;
+}
+
+type InferRequest<
+  TConfig1 extends RequestConfig,
+  TConfig2 extends RequestConfig = {},
+> = InferParser<
+  Overwrite<TConfig1, TConfig2, "parseRequest", AnyParser, unknown>
+>;
+
+type InferSearch<
+  TConfig1 extends RequestConfig,
+  TConfig2 extends RequestConfig = {},
+> = InferParser<
+  Overwrite<TConfig1, TConfig2, "parseSearch", AnyParser, unknown>
+>;
+
+export type InferResponse<
+  TConfig1 extends RequestConfig,
+  TConfig2 extends RequestConfig = {},
+> = InferParser<
+  Overwrite<
+    TConfig1,
+    TConfig2,
+    "parseResponse",
+    AnyParser,
+    (input: unknown) => any
+  >
+>;
+
+/***********\
+|** UTILS **|
+\***********/
+type Resolvable<T> = T | (() => T);
+
+type Overwrite<
+  T1,
+  T2,
+  Key extends keyof T1 | keyof T2,
+  Ref,
+  Fallback = never,
+> = T2 extends { [_ in Key]: Ref }
+  ? T2[Key]
+  : T1 extends { [_ in Key]: Ref }
+    ? T1[Key]
+    : Fallback;
 
 type Merge<T1, T2> =
   T1 extends Record<string, unknown>
@@ -203,9 +237,33 @@ type Merge<T1, T2> =
       : T1
     : T2;
 
+/**************\
+|** PATHNAME **|
+\**************/
+type ConcatPathnames<T extends unknown[]> = T extends [infer F, ...infer R]
+  ? string extends F
+    ? ConcatPathnames<R>
+    : F extends string
+      ? RemoveOuterSlashes<F> extends ""
+        ? ConcatPathnames<R>
+        : `/${RemoveOuterSlashes<F>}${ConcatPathnames<R>}`
+      : ConcatPathnames<R>
+  : "";
+
 type RemoveOuterSlashes<T> = RemoveRightSlash<RemoveLeftSlash<T>>;
 type RemoveLeftSlash<T> = T extends `/${infer P}` ? RemoveLeftSlash<P> : T;
 type RemoveRightSlash<T> = T extends `${infer P}/` ? RemoveRightSlash<P> : T;
 
+type ExtractRouteParams<T extends string> =
+  T extends `${string}{${infer Param}}${infer P}`
+    ? Merge<
+        { [K in Param]: Resolvable<string | number> },
+        ExtractRouteParams<P>
+      >
+    : {};
+
+/******************\
+|** UNION VALUES **|
+\******************/
 type EmptyValue = (typeof EMPTY_VALUES)[number];
 type VoidMethod = (typeof VOID_METHODS)[number];

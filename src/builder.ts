@@ -1,27 +1,27 @@
-import type { z, ZodType } from "zod";
-import { ZodError } from "zod";
 import type {
-  ComputeMissingParams,
-  InferRequestData,
-  InferRouteParams,
-  InferSearch,
-  Overwrite,
+  InferredConfigs,
+  InferResponse,
   RequestConfig,
   SendArgs,
 } from "./core";
 import {
   concatPathname,
   isEmpty,
+  isVoid,
   mergeConfigs,
-  noBody,
   VOID_METHODS,
 } from "./core";
+import {
+  YajlibError,
+  YajlibParseError,
+  YajlibRuntimeError,
+  YajlibServerError,
+} from "./errors";
+import type { ParseError } from "./parser";
+import { runParser } from "./parser";
 
 export function yajlib<
-  const TConfig extends RequestConfig & {
-    params?: InferRouteParams<TConfig>;
-    data?: InferRequestData<TConfig>;
-  },
+  const TConfig extends RequestConfig & InferredConfigs<TConfig>,
 >(config: TConfig) {
   return new RequestBuilder(config);
 }
@@ -34,23 +34,14 @@ export class RequestBuilder<const TConfig extends RequestConfig> {
   }
 
   extend<
-    const TNewConfig extends RequestConfig & {
-      params?: InferRouteParams<TConfig, TNewConfig>;
-      data?: InferRequestData<TConfig, TNewConfig>;
-    },
+    const TNewConfig extends RequestConfig &
+      InferredConfigs<TConfig, TNewConfig>,
   >(config: TNewConfig) {
     return new RequestBuilder(mergeConfigs(this.config, config));
   }
 
   async send<const TNewConfig extends RequestConfig>(
-    ...[config]: SendArgs<
-      TNewConfig & { params?: InferRouteParams<TConfig, TNewConfig> },
-      {
-        data: InferRequestData<TConfig, TNewConfig>;
-        params: ComputeMissingParams<TConfig, TNewConfig>;
-        search: InferSearch<TConfig, TNewConfig>;
-      }
-    >
+    ...[config]: SendArgs<TConfig, TNewConfig>
   ) {
     const mergedConfig = config
         ? mergeConfigs(this.config, config)
@@ -70,12 +61,6 @@ export class RequestBuilder<const TConfig extends RequestConfig> {
       } = mergedConfig,
       url = new URL(
         typeof baseUrl === "string" ? baseUrl : baseUrl?.href || "/",
-      ),
-      excludeBody = noBody(method);
-
-    if (excludeBody && data)
-      console.error(
-        new Error(`Methods [${VOID_METHODS.join(", ")}] do not accept a body!`),
       );
 
     if (url.pathname && pathname)
@@ -95,34 +80,31 @@ export class RequestBuilder<const TConfig extends RequestConfig> {
       );
     }
 
-    let key, value;
+    let key, value, resolvedSearch: Record<string, any> | undefined | null;
 
     if (search) {
-      let resolvedSearch: Record<string, any> | undefined | null = {};
-
+      resolvedSearch = {};
       for ([key, value] of Object.entries(search))
         resolvedSearch[key] = typeof value === "function" ? value() : value;
-
-      if (parseSearch) {
-        const result = await parseSearch.safeParseAsync(resolvedSearch);
-        if (result.success) resolvedSearch = result.data;
-        else
-          throw {
-            type: "PARSE_ERROR",
-            error: result.error,
-            target: "search",
-          };
-      }
-
-      if (resolvedSearch)
-        for ([key, value] of Object.entries(resolvedSearch)) {
-          if (isEmpty(value)) continue;
-          if (Array.isArray(value)) {
-            let val;
-            for (val of value) url.searchParams.append(key, `${val}`);
-          } else url.searchParams.set(key, `${value}`);
-        }
     }
+
+    if (parseSearch) {
+      const result = await runParser<Record<string, any> | undefined>(
+        parseSearch,
+        resolvedSearch,
+      );
+      if (!result.success) throw new YajlibParseError("search", result.error);
+      resolvedSearch = result.data;
+    }
+
+    if (resolvedSearch)
+      for ([key, value] of Object.entries(resolvedSearch)) {
+        if (isEmpty(value)) continue;
+        if (Array.isArray(value)) {
+          let val;
+          for (val of value) url.searchParams.append(key, `${val}`);
+        } else url.searchParams.set(key, `${value}`);
+      }
 
     const resolvedHeaders = new Headers();
     if (headers)
@@ -131,17 +113,20 @@ export class RequestBuilder<const TConfig extends RequestConfig> {
           resolvedHeaders.set(key, value);
 
     let body: any;
-    if (!excludeBody) {
+    if (isVoid(method)) {
+      if (data)
+        console.error(
+          new Error(
+            `Methods [${VOID_METHODS.join(", ")}] do not accept a body!`,
+          ),
+        );
+    } else {
       body = data;
-      if (body && parseRequest) {
-        body = await parseRequest.safeParseAsync(body);
-        if (body.success) body = body.data;
-        else
-          throw {
-            type: "PARSE_ERROR",
-            error: body.error,
-            target: "data",
-          };
+      if (parseRequest) {
+        const result = await runParser(parseRequest, body);
+        if (!result.success)
+          throw new YajlibParseError("request", result.error);
+        body = result.data;
       }
     }
 
@@ -161,6 +146,8 @@ export class RequestBuilder<const TConfig extends RequestConfig> {
         resolvedHeaders.set("Content-Type", contentType);
     }
 
+    type Output = InferResponse<TConfig, TNewConfig>["Output"];
+
     try {
       const response = await fetch(url.href, {
         method,
@@ -169,34 +156,32 @@ export class RequestBuilder<const TConfig extends RequestConfig> {
         signal,
       });
       if (!response.ok && !mergedConfig.silent) {
-        let errorData, parseError;
         const errorText = await response.text();
+        let errorData: unknown = errorText,
+          parseError: ParseError | undefined;
         try {
-          errorData = JSON.parse(errorText);
-          const { parseError } = mergedConfig;
-          if (parseError) errorData = parseError.parse(errorData);
-        } catch (error) {
-          if (error instanceof ZodError) parseError = error;
-          else errorData = errorText;
+          const json = JSON.parse(errorText);
+          errorData = json;
+          if (mergedConfig.parseError) {
+            const result = await runParser(mergedConfig.parseError, json);
+            if (result.success) errorData = result.data;
+            else parseError = result.error;
+          }
+        } catch {
+          // Not JSON: keep the raw text.
         }
-        throw {
-          type: "SERVER_ERROR",
-          status: response.status,
-          error: errorData,
-          parseError,
-        };
+        throw new YajlibServerError(response.status, errorData, parseError);
       }
 
-      const data = await response.json();
+      const responseData = await response.json();
+      if (!parseResponse) return responseData as Output;
 
-      return (parseResponse ? parseResponse.parse(data) : data) as z.infer<
-        Overwrite<TConfig, TNewConfig, "parseResponse", ZodType, any>
-      >;
+      const result = await runParser(parseResponse, responseData);
+      if (!result.success) throw new YajlibParseError("response", result.error);
+      return result.data as Output;
     } catch (error: any) {
-      if (EXPECTED_ERROR.includes(error.type)) throw error;
-      throw { type: "RUNTIME_ERROR", error };
+      if (error instanceof YajlibError) throw error;
+      throw new YajlibRuntimeError(error);
     }
   }
 }
-
-const EXPECTED_ERROR = ["SERVER_ERROR", "PARSE_ERROR"];
